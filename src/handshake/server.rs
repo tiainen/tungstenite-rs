@@ -7,7 +7,8 @@ use std::{
 };
 
 use http::{
-    response::Builder, HeaderMap, Request as HttpRequest, Response as HttpResponse, StatusCode,
+    response::Builder, HeaderMap, HeaderValue, Request as HttpRequest, Response as HttpResponse,
+    StatusCode,
 };
 use httparse::Status;
 use log::*;
@@ -20,6 +21,7 @@ use super::{
 };
 use crate::{
     error::{Error, ProtocolError, Result},
+    extensions::WebSocketExtension,
     protocol::{Role, WebSocket, WebSocketConfig},
 };
 
@@ -240,7 +242,31 @@ impl<S: Read + Write, C: Callback> HandshakeRole for ServerHandshake<S, C> {
                     return Err(Error::Protocol(ProtocolError::JunkAfterRequest));
                 }
 
-                let response = create_response(&result)?;
+                let mut response = create_response(&result)?;
+
+                let offers = result
+                    .headers()
+                    .iter()
+                    .filter(|(key, _)| key.as_str() == "sec-websocket-extensions")
+                    .map(|(_, value)| WebSocketExtension::from(value))
+                    .collect();
+                println!("OFFERS: {:?}", offers);
+
+                if let Some(config) = self.config {
+                    println!("CONFIG: {:?}", config);
+                    if let Some(accepted_offers) = config.extensions.negotiate_offers(offers) {
+                        println!("ACCEPTED_OFFERS: {:?}", accepted_offers);
+                        for accepted_offer in accepted_offers {
+                            let proto: String = accepted_offer.into();
+                            response.headers_mut().append(
+                                "Sec-WebSocket-Extensions",
+                                HeaderValue::from_str(&proto).unwrap(),
+                            );
+                        }
+                        // self.extensions = accepted_offers;
+                    }
+                }
+
                 let callback_result = if let Some(callback) = self.callback.take() {
                     callback.on_request(&result, response)
                 } else {

@@ -19,6 +19,7 @@ all-features = true
 
 [features]
 default = ["handshake"]
+deflate = ["flate2"]
 handshake = ["data-encoding", "http", "httparse", "sha1"]
 url = ["dep:url"]
 native-tls = ["native-tls-crate"]
@@ -39,6 +40,10 @@ sha1 = { version = "0.10", optional = true }
 thiserror = "1.0.23"
 url = { version = "2.1.0", optional = true }
 utf-8 = "0.7.5"
+
+[dependencies.flate2]
+optional = true
+version = "1.0"
 
 [dependencies.native-tls-crate]
 optional = true

@@ -58,7 +58,7 @@ impl<S: Read + Write> ClientHandshake<S> {
 
         // Convert and verify the `http::Request` and turn it into the request as per RFC.
         // Also extract the key from it (it must be present in a correct request).
-        let (request, key) = generate_request(request)?;
+        let (request, key) = generate_request(request, config)?;
 
         let machine = HandshakeMachine::start_write(stream, request);
 
@@ -108,7 +108,10 @@ impl<S: Read + Write> HandshakeRole for ClientHandshake<S> {
 }
 
 /// Verifies and generates a client WebSocket request from the original request and extracts a WebSocket key from it.
-pub fn generate_request(mut request: Request) -> Result<(Vec<u8>, String)> {
+pub fn generate_request(
+    mut request: Request,
+    config: Option<WebSocketConfig>,
+) -> Result<(Vec<u8>, String)> {
     let mut req = Vec::new();
     write!(
         req,
@@ -177,6 +180,14 @@ pub fn generate_request(mut request: Request) -> Result<(Vec<u8>, String)> {
         }
 
         writeln!(req, "{}: {}\r", name, v.to_str()?).unwrap();
+    }
+
+    // Write the protocols for any WebSocket extension
+    if let Some(config) = config {
+        for extension_offer in config.extensions.create_offers() {
+            let proto: String = extension_offer.into();
+            writeln!(req, "Sec-WebSocket-Extensions: {proto}\r").unwrap();
+        }
     }
 
     writeln!(req, "\r").unwrap();
@@ -357,7 +368,7 @@ mod tests {
     #[test]
     fn request_formatting() {
         let request = "ws://localhost/getCaseCount".into_client_request().unwrap();
-        let (request, key) = generate_request(request).unwrap();
+        let (request, key) = generate_request(request, None).unwrap();
         let correct = construct_expected("localhost", &key);
         assert_eq!(&request[..], &correct[..]);
     }
@@ -365,7 +376,7 @@ mod tests {
     #[test]
     fn request_formatting_with_host() {
         let request = "wss://localhost:9001/getCaseCount".into_client_request().unwrap();
-        let (request, key) = generate_request(request).unwrap();
+        let (request, key) = generate_request(request, None).unwrap();
         let correct = construct_expected("localhost:9001", &key);
         assert_eq!(&request[..], &correct[..]);
     }
@@ -373,7 +384,7 @@ mod tests {
     #[test]
     fn request_formatting_with_at() {
         let request = "wss://user:pass@localhost:9001/getCaseCount".into_client_request().unwrap();
-        let (request, key) = generate_request(request).unwrap();
+        let (request, key) = generate_request(request, None).unwrap();
         let correct = construct_expected("localhost:9001", &key);
         assert_eq!(&request[..], &correct[..]);
     }
@@ -389,6 +400,6 @@ mod tests {
     #[test]
     fn invalid_custom_request() {
         let request = http::Request::builder().method("GET").body(()).unwrap();
-        assert!(generate_request(request).is_err());
+        assert!(generate_request(request, None).is_err());
     }
 }

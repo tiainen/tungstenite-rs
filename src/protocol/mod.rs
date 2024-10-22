@@ -13,7 +13,10 @@ use self::{
     },
     message::{IncompleteMessage, IncompleteMessageType},
 };
-use crate::error::{Error, ProtocolError, Result};
+use crate::{
+    error::{Error, ProtocolError, Result},
+    extensions::Extensions,
+};
 use log::*;
 use std::{
     io::{self, Read, Write},
@@ -70,6 +73,8 @@ pub struct WebSocketConfig {
     /// some popular libraries that are sending unmasked frames, ignoring the RFC.
     /// By default this option is set to `false`, i.e. according to RFC 6455.
     pub accept_unmasked_frames: bool,
+    /// Extension to be activated on the connection
+    pub extensions: Extensions,
 }
 
 impl Default for WebSocketConfig {
@@ -82,6 +87,7 @@ impl Default for WebSocketConfig {
             max_message_size: Some(64 << 20),
             max_frame_size: Some(16 << 20),
             accept_unmasked_frames: false,
+            extensions: Extensions::default(),
         }
     }
 }
