@@ -1,5 +1,5 @@
 use tungstenite::client::connect_with_config;
-use tungstenite::extensions::deflate::PerMessageDeflate;
+use tungstenite::extensions::deflate::DeflateConfig;
 use tungstenite::extensions::Extensions;
 use tungstenite::protocol::WebSocketConfig;
 use tungstenite::Message;
@@ -7,7 +7,7 @@ use tungstenite::Message;
 fn main() {
     env_logger::init();
 
-    let permessage_deflate = PerMessageDeflate {
+    let permessage_deflate = DeflateConfig {
         request_no_context_takeover: true,
         max_window_bits: 8,
         accept_no_context_takeover: true,

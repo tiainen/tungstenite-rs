@@ -2,7 +2,7 @@ use std::{net::TcpListener, thread::spawn};
 
 use tungstenite::{
     accept_hdr_with_config,
-    extensions::{deflate::PerMessageDeflate, Extensions},
+    extensions::{deflate::DeflateConfig, Extensions},
     handshake::server::{Request, Response},
     protocol::WebSocketConfig,
 };
@@ -10,7 +10,7 @@ use tungstenite::{
 fn main() {
     env_logger::init();
 
-    let permessage_deflate = PerMessageDeflate {
+    let permessage_deflate = DeflateConfig {
         request_no_context_takeover: true,
         max_window_bits: 15,
         accept_no_context_takeover: true,

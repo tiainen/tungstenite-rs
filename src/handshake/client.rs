@@ -19,6 +19,7 @@ use super::{
 };
 use crate::{
     error::{Error, ProtocolError, Result, SubProtocolError, UrlError},
+    extensions::{ResolvedExtensions, WebSocketExtensions},
     protocol::{Role, WebSocket, WebSocketConfig},
 };
 
@@ -89,18 +90,24 @@ impl<S: Read + Write> HandshakeRole for ClientHandshake<S> {
                 ProcessingResult::Continue(HandshakeMachine::start_read(stream))
             }
             StageResult::DoneReading { stream, result, tail } => {
-                let result = match self.verify_data.verify_response(result) {
-                    Ok(r) => r,
-                    Err(Error::Http(mut e)) => {
-                        *e.body_mut() = Some(tail);
-                        return Err(Error::Http(e));
-                    }
-                    Err(e) => return Err(e),
-                };
+                let (result, resolved_extensions) =
+                    match self.verify_data.verify_response(result, &self.config) {
+                        Ok(r) => r,
+                        Err(Error::Http(mut e)) => {
+                            *e.body_mut() = Some(tail);
+                            return Err(Error::Http(e));
+                        }
+                        Err(e) => return Err(e),
+                    };
 
                 debug!("Client handshake done.");
-                let websocket =
-                    WebSocket::from_partially_read(stream, tail, Role::Client, self.config);
+                let websocket = WebSocket::from_partially_read_with_extensions(
+                    stream,
+                    tail,
+                    Role::Client,
+                    self.config,
+                    resolved_extensions,
+                );
                 ProcessingResult::Done((websocket, result))
             }
         })
@@ -185,7 +192,7 @@ pub fn generate_request(
     // Write the protocols for any WebSocket extension
     if let Some(config) = config {
         for extension_offer in config.extensions.create_offers() {
-            let proto: String = extension_offer.into();
+            let proto: String = extension_offer.proto();
             writeln!(req, "Sec-WebSocket-Extensions: {proto}\r").unwrap();
         }
     }
@@ -214,7 +221,11 @@ struct VerifyData {
 }
 
 impl VerifyData {
-    pub fn verify_response(&self, response: Response) -> Result<Response> {
+    pub fn verify_response(
+        &self,
+        response: Response,
+        config: &Option<WebSocketConfig>,
+    ) -> Result<(Response, Option<ResolvedExtensions>)> {
         // 1. If the status code received from the server is not 101, the
         // client handles the response per HTTP [RFC2616] procedures. (RFC 6455)
         if response.status() != StatusCode::SWITCHING_PROTOCOLS {
@@ -259,7 +270,20 @@ impl VerifyData {
         // that was not present in the client's handshake (the server has
         // indicated an extension not requested by the client), the client
         // MUST _Fail the WebSocket Connection_. (RFC 6455)
-        // TODO
+        let extensions = if let Some(agreed) = headers
+            .iter()
+            .filter(|(key, _)| key.as_str() == "sec-websocket-extensions")
+            .map(|(_, value)| WebSocketExtensions::from(value))
+            .next()
+        {
+            if let Some(config) = config {
+                config.extensions.verify_extensions(&agreed)?
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         // 6.  If the response includes a |Sec-WebSocket-Protocol| header field
         // and this header field indicates the use of a subprotocol that was
@@ -288,7 +312,7 @@ impl VerifyData {
             }
         }
 
-        Ok(response)
+        Ok((response, extensions))
     }
 }
 

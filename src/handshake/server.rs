@@ -21,7 +21,7 @@ use super::{
 };
 use crate::{
     error::{Error, ProtocolError, Result},
-    extensions::WebSocketExtension,
+    extensions::{ResolvedExtensions, WebSocketExtensions},
     protocol::{Role, WebSocket, WebSocketConfig},
 };
 
@@ -204,6 +204,8 @@ pub struct ServerHandshake<S, C> {
     config: Option<WebSocketConfig>,
     /// Error code/flag. If set, an error will be returned after sending response to the client.
     error_response: Option<ErrorResponse>,
+    // Negotiated extension context for server.
+    extensions: Option<ResolvedExtensions>,
     /// Internal stream type.
     _marker: PhantomData<S>,
 }
@@ -221,6 +223,7 @@ impl<S: Read + Write, C: Callback> ServerHandshake<S, C> {
                 callback: Some(callback),
                 config,
                 error_response: None,
+                extensions: None,
                 _marker: PhantomData,
             },
         }
@@ -248,22 +251,24 @@ impl<S: Read + Write, C: Callback> HandshakeRole for ServerHandshake<S, C> {
                     .headers()
                     .iter()
                     .filter(|(key, _)| key.as_str() == "sec-websocket-extensions")
-                    .map(|(_, value)| WebSocketExtension::from(value))
+                    .flat_map(|(_, value)| {
+                        WebSocketExtensions::from(value)
+                            .iter()
+                            .map(|w| w.to_owned())
+                            .collect::<Vec<_>>()
+                    })
                     .collect();
-                println!("OFFERS: {:?}", offers);
 
                 if let Some(config) = self.config {
-                    println!("CONFIG: {:?}", config);
                     if let Some(accepted_offers) = config.extensions.negotiate_offers(offers) {
-                        println!("ACCEPTED_OFFERS: {:?}", accepted_offers);
-                        for accepted_offer in accepted_offers {
-                            let proto: String = accepted_offer.into();
+                        for accepted_offer in &accepted_offers {
+                            let proto: String = accepted_offer.proto();
                             response.headers_mut().append(
                                 "Sec-WebSocket-Extensions",
                                 HeaderValue::from_str(&proto).unwrap(),
                             );
                         }
-                        // self.extensions = accepted_offers;
+                        self.extensions = accepted_offers.try_into().ok();
                     }
                 }
 
@@ -309,7 +314,12 @@ impl<S: Read + Write, C: Callback> HandshakeRole for ServerHandshake<S, C> {
                     return Err(Error::Http(http::Response::from_parts(parts, body)));
                 } else {
                     debug!("Server handshake done.");
-                    let websocket = WebSocket::from_raw_socket(stream, Role::Server, self.config);
+                    let websocket = WebSocket::from_raw_socket_with_extensions(
+                        stream,
+                        Role::Server,
+                        self.config,
+                        self.extensions.take(),
+                    );
                     ProcessingResult::Done(websocket)
                 }
             }

@@ -3,25 +3,71 @@
 pub mod deflate;
 
 use deflate::{
-    PerMessageDeflate, PARAM_CLIENT_MAX_WINDOW_BITS, PARAM_CLIENT_NO_CONTEXT_TAKEOVER,
+    DeflateConfig, DeflateContext, PARAM_CLIENT_MAX_WINDOW_BITS, PARAM_CLIENT_NO_CONTEXT_TAKEOVER,
     PARAM_SERVER_MAX_WINDOW_BITS, PARAM_SERVER_NO_CONTEXT_TAKEOVER, PERMESSAGE_DEFLATE_NAME,
 };
 use http::HeaderValue;
 
-/// WEBSOCKETEXTENSION!!!!
+use crate::{
+    error::{ProtocolError, Result},
+    Error,
+};
+
+/// `Sec-WebSocket-Extensions` header, defined in [RFC6455][RFC6455_11.3.2]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WebSocketExtensions(Vec<WebSocketExtension>);
+
+impl WebSocketExtensions {
+    /// An iterator over the `WebsocketExtension`s in `SecWebsocketExtensions` header(s).
+    pub fn iter(&self) -> impl Iterator<Item = &WebSocketExtension> {
+        self.0.iter()
+    }
+}
+
+impl From<&HeaderValue> for WebSocketExtensions {
+    fn from(header_value: &HeaderValue) -> Self {
+        let mut extensions = vec![];
+        let extension_values = header_value.to_str().unwrap().split(',');
+        for extension_value in extension_values.into_iter() {
+            let mut values = extension_value.split(';');
+            let name = values.next().unwrap_or("");
+            let mut params = vec![];
+            for value in values.into_iter() {
+                if value.contains('=') {
+                    let mut param_with_value = value.split('=');
+                    let param_name = param_with_value.next().unwrap().to_owned();
+                    let param_value = param_with_value.next().map(|v| v.to_owned());
+                    params.push((param_name, param_value));
+                } else {
+                    params.push((value.to_owned(), None));
+                }
+            }
+            extensions.push(WebSocketExtension { name: name.to_owned(), params });
+        }
+        WebSocketExtensions(extensions)
+    }
+}
+
+/// A WebSocket extension containing the name and parameters.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WebSocketExtension {
     name: String,
     params: Vec<(String, Option<String>)>,
 }
 
-impl Into<String> for WebSocketExtension {
-    fn into(self) -> String {
+impl WebSocketExtension {
+    /// Get the name of the extension.
+    pub fn name(&self) -> &str {
+        self.name.as_str()
+    }
+
+    /// Create the protocol string for the Sec-WebSocket-Extensions header value
+    pub fn proto(&self) -> String {
         let mut proto = String::new();
 
         proto.push_str(&self.name);
 
-        for (key, val) in self.params {
+        for (key, val) in &self.params {
             proto.push_str("; ");
             proto.push_str(&key);
             if let Some(val) = val {
@@ -34,30 +80,11 @@ impl Into<String> for WebSocketExtension {
     }
 }
 
-impl From<&HeaderValue> for WebSocketExtension {
-    fn from(header_value: &HeaderValue) -> Self {
-        let mut values = header_value.to_str().unwrap().split(';');
-        let name = values.next().unwrap_or("");
-        let mut params = vec![];
-        for value in values.into_iter() {
-            if value.contains('=') {
-                let mut param_with_value = value.split('=');
-                let param_name = param_with_value.next().unwrap().to_owned();
-                let param_value = param_with_value.next().map(|v| v.to_owned());
-                params.push((param_name, param_value));
-            } else {
-                params.push((value.to_owned(), None));
-            }
-        }
-        WebSocketExtension { name: name.to_owned(), params }
-    }
-}
-
 /// Struct for defining WebSocket extensions.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Extensions {
-    /// List of extensions to apply
-    pub deflate: Option<PerMessageDeflate>,
+    /// Configuration for the permessage-deflate extension
+    pub deflate: Option<DeflateConfig>,
 }
 
 impl Extensions {
@@ -119,5 +146,72 @@ impl Extensions {
         }
 
         Some(accepted_offers)
+    }
+
+    pub(crate) fn verify_extensions(
+        &self,
+        agreed: &WebSocketExtensions,
+    ) -> Result<Option<ResolvedExtensions>> {
+        #[cfg(feature = "deflate")]
+        {
+            let mut resolved_extensions = None;
+
+            if let Some(deflate) = self.deflate {
+                for extension in agreed.iter() {
+                    if extension.name != deflate.name() {
+                        return Err(Error::Protocol(ProtocolError::InvalidExtension(
+                            extension.name().to_string(),
+                        )));
+                    }
+
+                    if resolved_extensions.is_some() {
+                        return Err(Error::Protocol(ProtocolError::ExtensionConflict(
+                            extension.name().to_string(),
+                        )));
+                    }
+
+                    resolved_extensions = Some(ResolvedExtensions {
+                        deflate: Some(DeflateContext::new_from_extension(extension)?),
+                    });
+                }
+
+                return Ok(resolved_extensions);
+            }
+        }
+
+        if let Some(extension) = agreed.iter().next() {
+            // The client didn't request anything, but got something
+            return Err(Error::Protocol(ProtocolError::InvalidExtension(
+                extension.name().to_string(),
+            )));
+        }
+
+        Ok(None)
+    }
+}
+
+/// Struct for defining resolved WebSocket extensions.
+#[derive(Debug, Default)]
+pub struct ResolvedExtensions {
+    /// Resolved context for the permessage-deflate extension
+    pub deflate: Option<DeflateContext>,
+}
+
+impl TryFrom<Vec<WebSocketExtension>> for ResolvedExtensions {
+    type Error = Error;
+
+    fn try_from(extensions: Vec<WebSocketExtension>) -> std::result::Result<Self, Self::Error> {
+        let mut resolved_extensions = ResolvedExtensions::default();
+
+        #[cfg(feature = "deflate")]
+        {
+            if let Some(extension) =
+                extensions.iter().filter(|e| e.name() == PERMESSAGE_DEFLATE_NAME).next()
+            {
+                resolved_extensions.deflate = Some(DeflateContext::new_from_extension(extension)?);
+            }
+        }
+
+        Ok(resolved_extensions)
     }
 }
