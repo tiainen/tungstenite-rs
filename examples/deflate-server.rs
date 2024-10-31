@@ -10,11 +10,7 @@ use tungstenite::{
 fn main() {
     env_logger::init();
 
-    let permessage_deflate = DeflateConfig {
-        request_no_context_takeover: true,
-        max_window_bits: 15,
-        accept_no_context_takeover: true,
-    };
+    let permessage_deflate = DeflateConfig::default();
 
     let websocket_config = WebSocketConfig {
         extensions: Extensions { deflate: Some(permessage_deflate) },

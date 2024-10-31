@@ -130,7 +130,7 @@ impl DeflateContext {
     pub fn new(config: DeflateConfig) -> Self {
         DeflateContext {
             config,
-            compressor: Compress::new(Compression::fast(), false),
+            compressor: Compress::new(Compression::new(6), false),
             decompressor: Decompress::new(false),
         }
     }
