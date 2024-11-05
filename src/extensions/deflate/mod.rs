@@ -24,7 +24,7 @@ pub enum DeflateError {
     Decompress(#[source] std::io::Error),
 
     /// Extension negotiation failed.
-    #[error("Extension negotiation failed")]
+    #[error("Extension negotiation failed: {0:?}")]
     Negotiation(#[source] NegotiationError),
 }
 
@@ -37,6 +37,9 @@ pub enum NegotiationError {
     /// Duplicate parameter in a negotiation response.
     #[error("Duplicate parameter in a negotiation response: {0}")]
     DuplicateParameter(String),
+    /// Received `client_max_window_bits` value in a negotiation response for an offer that had a smaller value.
+    #[error("Received client_max_windows_bits value in a negotiation response that is larger than the offer: {0} > {1}")]
+    ClientMaxWindowBitsValueTooLarge(String, u8),
     /// Received `client_max_window_bits` in a negotiation response for an offer without it.
     #[error("Received client_max_window_bits in a negotiation response for an offer without it")]
     UnexpectedClientMaxWindowBits,
@@ -49,6 +52,9 @@ pub enum NegotiationError {
     /// Invalid `server_max_window_bits` value in a negotiation response.
     #[error("Invalid server_max_window_bits value in a negotiation response: {0}")]
     InvalidServerMaxWindowBitsValue(String),
+    /// Missing `client_max_window_bits` value in a negotiation response.
+    #[error("Missing client_max_window_bits value in a negotiation response")]
+    MissingClientMaxWindowBitsValue,
     /// Missing `server_max_window_bits` value in a negotiation response.
     #[error("Missing server_max_window_bits value in a negotiation response")]
     MissingServerMaxWindowBitsValue,
@@ -76,7 +82,7 @@ impl Default for DeflateConfig {
         DeflateConfig {
             max_window_bits: 15,
             request_no_context_takeover: false,
-            accept_no_context_takeover: true,
+            accept_no_context_takeover: false,
         }
     }
 }
@@ -106,6 +112,10 @@ impl DeflateConfig {
             params.push((PARAM_SERVER_NO_CONTEXT_TAKEOVER.to_owned(), None));
         }
 
+        if self.accept_no_context_takeover {
+            params.push((PARAM_CLIENT_NO_CONTEXT_TAKEOVER.to_owned(), None));
+        }
+
         WebSocketExtension { name: PERMESSAGE_DEFLATE_NAME.to_owned(), params }
     }
 }
@@ -119,9 +129,102 @@ pub struct DeflateContext {
 }
 
 impl DeflateContext {
-    /// Create a new context from the given extension
-    pub fn new_from_extension(_extension: &WebSocketExtension) -> Result<Self, DeflateError> {
-        let config = DeflateConfig::default();
+    /// Create a new context from the given extension parameters
+    pub fn new_from_extension_params<'a, I>(config: DeflateConfig, params: I) -> Result<Self, DeflateError>
+    where
+        I: IntoIterator<Item = (&'a str, Option<&'a str>)>
+    {
+        let mut config = DeflateConfig {
+            max_window_bits: config.max_window_bits,
+            accept_no_context_takeover: config.accept_no_context_takeover,
+            ..DeflateConfig::default()
+        };
+
+        let mut seen_server_no_context_takeover = false;
+        let mut seen_client_no_context_takeover = false;
+
+        // A client MUST _Fail the WebSocket Connection_ if the peer server
+        // accepted an extension negotiation offer for this extension with an
+        // extension negotiation response meeting any of the following
+        // conditions:
+        // 1. The negotiation response contains an extension parameter not defined for use in a response.
+        // 2. The negotiation response contains an extension parameter with an invalid value.
+        // 3. The negotiation response contains multiple extension parameters with the same name.
+        // 4. The client does not support the configuration that the response represents.
+        for (key, val) in params {
+            match key {
+                PARAM_SERVER_NO_CONTEXT_TAKEOVER => {
+                    // Fail the connection when the response contains multiple parameters with the same name.
+                    if seen_server_no_context_takeover {
+                        return Err(DeflateError::Negotiation(
+                            NegotiationError::DuplicateParameter(key.to_owned()),
+                        ));
+                    }
+                    seen_server_no_context_takeover = true;
+                    // A server MAY include the "server_no_context_takeover" extension
+                    // parameter in an extension negotiation response even if the extension
+                    // negotiation offer being accepted by the extension negotiation
+                    // response didn't include the "server_no_context_takeover" extension
+                    // parameter.
+                    config.request_no_context_takeover = true;
+                }
+                PARAM_CLIENT_NO_CONTEXT_TAKEOVER => {
+                    // Fail the connection when the response contains multiple parameters with the same name.
+                    if seen_client_no_context_takeover {
+                        return Err(DeflateError::Negotiation(
+                            NegotiationError::DuplicateParameter(key.to_owned()),
+                        ));
+                    }
+                    seen_client_no_context_takeover = true;
+                    // The server may include this parameter in the response and the client MUST support it.
+                    config.accept_no_context_takeover = true;
+                }
+                PARAM_SERVER_MAX_WINDOW_BITS => {
+                    // Fail the connection when the response contains a parameter with invalid value.
+                    if let Some(bits) = val {
+                        if !is_valid_max_window_bits(bits) {
+                            return Err(DeflateError::Negotiation(
+                                NegotiationError::InvalidServerMaxWindowBitsValue(bits.to_owned()),
+                            ));
+                        }
+                    } else {
+                        return Err(DeflateError::Negotiation(
+                            NegotiationError::MissingServerMaxWindowBitsValue,
+                        ));
+                    }
+                }
+                PARAM_CLIENT_MAX_WINDOW_BITS => {
+                    // Fail the connection when the response contains a parameter with invalid value.
+                    if let Some(bits) = val {
+                        if !is_valid_max_window_bits(bits) {
+                            return Err(DeflateError::Negotiation(
+                                NegotiationError::InvalidClientMaxWindowBitsValue(bits.to_owned()),
+                            ));
+                        }
+                    } else {
+                        return Err(DeflateError::Negotiation(
+                            NegotiationError::MissingClientMaxWindowBitsValue,
+                        ));
+                    }
+
+                    if let Some(bits) = val {
+                        if bits.parse::<u8>().unwrap() > config.max_window_bits {
+                            return Err(DeflateError::Negotiation(
+                                NegotiationError::ClientMaxWindowBitsValueTooLarge(bits.to_owned(), config.max_window_bits),
+                            ));
+                        }
+
+                        config.max_window_bits = bits.parse().unwrap();
+                    }
+                }
+                // Response with unknown parameter MUST fail the WebSocket connection.
+                _ => {
+                    return Err(DeflateError::Negotiation(NegotiationError::UnknownParameter(
+                        key.to_owned(),
+                    )));
+                }
+            }
+        }
 
         Ok(DeflateContext::new(config))
     }
@@ -130,7 +233,7 @@ impl DeflateContext {
     pub fn new(config: DeflateConfig) -> Self {
         DeflateContext {
             config,
-            compressor: Compress::new(Compression::new(6), false),
+            compressor: Compress::new(Compression::default(), false),
             decompressor: Decompress::new(false),
         }
     }
@@ -204,4 +307,12 @@ impl DeflateContext {
 
         Ok(output)
     }
+}
+
+// A valid `client_max_window_bits` is no value or an integer in range `[8, 15]` without leading zeros.
+// A valid `server_max_window_bits` is an integer in range `[8, 15]` without leading zeros.
+#[cfg(feature = "handshake")]
+fn is_valid_max_window_bits(bits: &str) -> bool {
+    // Note that values from `headers::SecWebSocketExtensions` is unquoted.
+    matches!(bits, "8" | "9" | "10" | "11" | "12" | "13" | "14" | "15")
 }

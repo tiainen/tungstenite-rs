@@ -260,16 +260,15 @@ impl<S: Read + Write, C: Callback> HandshakeRole for ServerHandshake<S, C> {
                     .collect();
 
                 if let Some(config) = self.config {
-                    if let Some(accepted_offers) = config.extensions.negotiate_offers(offers) {
-                        for accepted_offer in &accepted_offers {
-                            let proto: String = accepted_offer.proto();
-                            response.headers_mut().append(
-                                "Sec-WebSocket-Extensions",
-                                HeaderValue::from_str(&proto).unwrap(),
-                            );
-                        }
-                        self.extensions = accepted_offers.try_into().ok();
+                    let (accepted_offers, extensions) = config.extensions.negotiate_offers(offers)?;
+                    for accepted_offer in &accepted_offers {
+                        let proto = accepted_offer.proto();
+                        response.headers_mut().append(
+                            "Sec-WebSocket-Extensions",
+                            HeaderValue::from_str(&proto).unwrap(),
+                        );
                     }
+                    self.extensions = Some(extensions);
                 }
 
                 let callback_result = if let Some(callback) = self.callback.take() {
