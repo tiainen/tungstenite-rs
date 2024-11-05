@@ -82,7 +82,7 @@ WebSockets. It is also covered by internal unit tests as well as possible.
 
 Running the Autobahn Test Suite requires docker to be installed. The client can be tested by running:
 
-    ./script/autobahn-client.sh
+    ./scripts/autobahn-client.sh
 
 The test results can be viewed by opening the reports in a browser: `./autobahn/client/index.html`.
 
