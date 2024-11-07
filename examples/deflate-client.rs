@@ -1,18 +1,21 @@
 use tungstenite::client::connect_with_config;
-use tungstenite::extensions::deflate::DeflateConfig;
-use tungstenite::extensions::Extensions;
+#[cfg(feature = "deflate")]
+use tungstenite::extensions::{deflate::DeflateConfig, Extensions};
 use tungstenite::protocol::WebSocketConfig;
 use tungstenite::Message;
 
 fn main() {
     env_logger::init();
 
+    #[cfg(feature = "deflate")]
     let permessage_deflate = DeflateConfig::default();
-
+    #[cfg(feature = "deflate")]
     let websocket_config = WebSocketConfig {
         extensions: Extensions { deflate: Some(permessage_deflate) },
         ..Default::default()
     };
+    #[cfg(not(feature = "deflate"))]
+    let websocket_config = WebSocketConfig::default();
 
     let (mut socket, response) =
         connect_with_config("ws://localhost:3012/socket", Some(websocket_config), 3)

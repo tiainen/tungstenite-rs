@@ -1,11 +1,10 @@
 //! WebSocket extensions.
 
+#[cfg(feature = "deflate")]
 pub mod deflate;
 
-use deflate::{
-    DeflateConfig, DeflateContext, PARAM_CLIENT_MAX_WINDOW_BITS, PARAM_CLIENT_NO_CONTEXT_TAKEOVER,
-    PARAM_SERVER_MAX_WINDOW_BITS, PARAM_SERVER_NO_CONTEXT_TAKEOVER, PERMESSAGE_DEFLATE_NAME,
-};
+#[cfg(feature = "deflate")]
+use deflate::{DeflateConfig, DeflateContext, PERMESSAGE_DEFLATE_NAME};
 use http::HeaderValue;
 
 use crate::{
@@ -32,7 +31,7 @@ impl From<&HeaderValue> for WebSocketExtensions {
             let mut values = extension_value.split(';');
             let name = values.next().unwrap_or("");
             let mut params = vec![];
-            for value in values.into_iter() {
+            for value in values {
                 if value.contains('=') {
                     let mut param_with_value = value.split('=');
                     let param_name = param_with_value.next().unwrap().trim().to_owned();
@@ -42,7 +41,7 @@ impl From<&HeaderValue> for WebSocketExtensions {
                     params.push((value.trim().to_owned(), None));
                 }
             }
-            extensions.push(WebSocketExtension { name: name.to_owned(), params });
+            extensions.push(WebSocketExtension { name: name.trim().to_owned(), params });
         }
         WebSocketExtensions(extensions)
     }
@@ -69,10 +68,10 @@ impl WebSocketExtension {
 
         for (key, val) in &self.params {
             proto.push_str("; ");
-            proto.push_str(&key);
+            proto.push_str(key);
             if let Some(val) = val {
                 proto.push('=');
-                proto.push_str(&val);
+                proto.push_str(val);
             }
         }
 
@@ -88,73 +87,77 @@ impl WebSocketExtension {
 /// Struct for defining WebSocket extensions.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Extensions {
+    #[cfg(feature = "deflate")]
     /// Configuration for the permessage-deflate extension
     pub deflate: Option<DeflateConfig>,
 }
 
 impl Extensions {
     pub(crate) fn create_offers(&self) -> Vec<WebSocketExtension> {
-        let mut extension_offers = vec![];
-        if let Some(mut deflate) = self.deflate {
-            extension_offers.push(deflate.create_extension());
+        #[cfg(feature = "deflate")]
+        {
+            let mut extension_offers = vec![];
+            if let Some(mut deflate) = self.deflate {
+                extension_offers.push(deflate.create_extension());
+            }
+            extension_offers
         }
 
-        extension_offers
+        #[cfg(not(feature = "deflate"))]
+        {
+            vec![]
+        }
     }
 
     pub(crate) fn negotiate_offers(
         &self,
-        offers: Vec<WebSocketExtension>,
-    ) -> Result<(Vec<WebSocketExtension>, ResolvedExtensions)> {
-        let mut accepted_offers = vec![];
-        let mut resolved_extensions = ResolvedExtensions::default();
+        _offers: Vec<WebSocketExtension>,
+    ) -> Result<Vec<WebSocketExtension>> {
+        #[cfg(feature = "deflate")]
+        {
+            let mut accepted_offers = vec![];
 
-        if let Some(deflate) = self.deflate {
-            if let Some(offer) = offers.iter().find(|offer| offer.name == PERMESSAGE_DEFLATE_NAME) {
-                let mut rejected = false;
-                let mut params = vec![];
-                for (key, val) in offer.params.iter() {
-                    match key.as_str() {
-                        PARAM_CLIENT_MAX_WINDOW_BITS => {
-                            if let Some(val) = val {
-                                let max_windows_bits = val.parse::<u8>().ok();
-                                if let Some(max_window_bits) = max_windows_bits {
-                                    if max_window_bits < 8
-                                        || max_window_bits > 15
-                                        || max_window_bits >= deflate.max_window_bits
-                                    {
-                                        rejected = true;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        PARAM_CLIENT_NO_CONTEXT_TAKEOVER => {
-                            params.push((PARAM_CLIENT_NO_CONTEXT_TAKEOVER.to_owned(), None));
-                        }
-                        PARAM_SERVER_MAX_WINDOW_BITS => {}
-                        PARAM_SERVER_NO_CONTEXT_TAKEOVER => {
-                            params.push((PARAM_SERVER_NO_CONTEXT_TAKEOVER.to_owned(), None));
-                        }
-                        _ => {
-                            break;
-                        }
-                    }
-                }
-
-                if !rejected {
-                    let deflate_extension = WebSocketExtension {
-                        name: PERMESSAGE_DEFLATE_NAME.to_owned(),
-                        params: params.clone(),
-                    };
-                    accepted_offers.push(deflate_extension);
-                    let p = params.iter().map(|(k, v)| (k.as_str(), v.as_ref().map(|v| v.as_str())));
-                    resolved_extensions.deflate = Some(DeflateContext::new_from_extension_params(deflate, p)?);
+            if let Some(deflate) = self.deflate {
+                if let Some(accepted_offer) =
+                    _offers.iter().find_map(|offer| deflate.accept_offer(offer))
+                {
+                    accepted_offers.push(accepted_offer);
                 }
             }
+
+            Ok(accepted_offers)
         }
 
-        Ok((accepted_offers, resolved_extensions))
+        #[cfg(not(feature = "deflate"))]
+        {
+            Ok(vec![])
+        }
+    }
+
+    pub(crate) fn resolve_extensions(
+        &self,
+        _accepted_offers: Vec<WebSocketExtension>,
+    ) -> Result<Option<ResolvedExtensions>> {
+        #[cfg(feature = "deflate")]
+        if let Some(deflate) = self.deflate {
+            let mut resolved_extensions = ResolvedExtensions { deflate: None };
+            if let Some(extension) =
+                _accepted_offers.iter().find(|e| e.name() == PERMESSAGE_DEFLATE_NAME)
+            {
+                resolved_extensions.deflate =
+                    Some(DeflateContext::new_from_extension_params(deflate, extension.params())?);
+                Ok(Some(resolved_extensions))
+            } else {
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        }
+
+        #[cfg(not(feature = "deflate"))]
+        {
+            Ok(None)
+        }
     }
 
     pub(crate) fn verify_extensions(
@@ -180,7 +183,10 @@ impl Extensions {
                     }
 
                     resolved_extensions = Some(ResolvedExtensions {
-                        deflate: Some(DeflateContext::new_from_extension_params(deflate, extension.params())?),
+                        deflate: Some(DeflateContext::new_from_extension_params(
+                            deflate,
+                            extension.params(),
+                        )?),
                     });
                 }
 
@@ -201,28 +207,9 @@ impl Extensions {
 
 /// Struct for defining resolved WebSocket extensions.
 #[derive(Debug, Default)]
+#[allow(missing_copy_implementations)]
 pub struct ResolvedExtensions {
+    #[cfg(feature = "deflate")]
     /// Resolved context for the permessage-deflate extension
     pub deflate: Option<DeflateContext>,
 }
-
-/*
-impl TryFrom<Vec<WebSocketExtension>> for ResolvedExtensions {
-    type Error = Error;
-
-    fn try_from(extensions: Vec<WebSocketExtension>) -> std::result::Result<Self, Self::Error> {
-        let mut resolved_extensions = ResolvedExtensions::default();
-
-        #[cfg(feature = "deflate")]
-        {
-            if let Some(extension) =
-                extensions.iter().filter(|e| e.name() == PERMESSAGE_DEFLATE_NAME).next()
-            {
-                resolved_extensions.deflate = Some(DeflateContext::new_from_extension_params(extension.params())?);
-            }
-        }
-
-        Ok(resolved_extensions)
-    }
-}
-*/

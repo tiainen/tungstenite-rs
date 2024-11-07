@@ -170,7 +170,6 @@ impl<Stream> WebSocket<Stream> {
         config: Option<WebSocketConfig>,
         extensions: Option<ResolvedExtensions>,
     ) -> Self {
-        println!("EXTENSIONS!!! {:?}", extensions);
         WebSocket {
             socket: stream,
             context: WebSocketContext::from_partially_read_with_extensions(

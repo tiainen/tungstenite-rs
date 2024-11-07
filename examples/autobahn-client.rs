@@ -1,11 +1,9 @@
 use log::*;
 
+#[cfg(feature = "deflate")]
+use tungstenite::extensions::{deflate::DeflateConfig, Extensions};
 use tungstenite::{
-    client::connect_with_config,
-    connect,
-    extensions::{deflate::DeflateConfig, Extensions},
-    protocol::WebSocketConfig,
-    Error, Message, Result,
+    client::connect_with_config, connect, protocol::WebSocketConfig, Error, Message, Result,
 };
 
 const AGENT: &str = "Tungstenite";
@@ -26,19 +24,21 @@ fn update_reports() -> Result<()> {
 fn run_test(case: u32) -> Result<()> {
     info!("Running test case {}", case);
 
+    #[cfg(feature = "deflate")]
     let permessage_deflate = DeflateConfig::default();
-
+    #[cfg(feature = "deflate")]
     let websocket_config = WebSocketConfig {
         extensions: Extensions { deflate: Some(permessage_deflate) },
         ..Default::default()
     };
+    #[cfg(not(feature = "deflate"))]
+    let websocket_config = WebSocketConfig::default();
 
     let case_url = format!("ws://localhost:9001/runCase?case={case}&agent={AGENT}");
     let (mut socket, _) = connect_with_config(case_url, Some(websocket_config), 3)?;
     loop {
         match socket.read()? {
             msg @ Message::Text(_) | msg @ Message::Binary(_) => {
-                println!("MSG!!! {}", msg);
                 socket.send(msg)?;
             }
             Message::Ping(_) | Message::Pong(_) | Message::Close(_) | Message::Frame(_) => {}

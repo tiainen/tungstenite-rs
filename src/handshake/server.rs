@@ -260,7 +260,7 @@ impl<S: Read + Write, C: Callback> HandshakeRole for ServerHandshake<S, C> {
                     .collect();
 
                 if let Some(config) = self.config {
-                    let (accepted_offers, extensions) = config.extensions.negotiate_offers(offers)?;
+                    let accepted_offers = config.extensions.negotiate_offers(offers)?;
                     for accepted_offer in &accepted_offers {
                         let proto = accepted_offer.proto();
                         response.headers_mut().append(
@@ -268,7 +268,7 @@ impl<S: Read + Write, C: Callback> HandshakeRole for ServerHandshake<S, C> {
                             HeaderValue::from_str(&proto).unwrap(),
                         );
                     }
-                    self.extensions = Some(extensions);
+                    self.extensions = config.extensions.resolve_extensions(accepted_offers)?;
                 }
 
                 let callback_result = if let Some(callback) = self.callback.take() {

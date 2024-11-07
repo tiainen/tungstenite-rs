@@ -6,10 +6,10 @@ use flate2::{Compress, Compression, Decompress, Status};
 use thiserror::Error;
 
 pub(crate) const PERMESSAGE_DEFLATE_NAME: &str = "permessage-deflate";
-pub(crate) const PARAM_CLIENT_MAX_WINDOW_BITS: &str = "client_max_window_bits";
-pub(crate) const PARAM_CLIENT_NO_CONTEXT_TAKEOVER: &str = "client_no_context_takeover";
-pub(crate) const PARAM_SERVER_MAX_WINDOW_BITS: &str = "server_max_window_bits";
-pub(crate) const PARAM_SERVER_NO_CONTEXT_TAKEOVER: &str = "server_no_context_takeover";
+const PARAM_CLIENT_MAX_WINDOW_BITS: &str = "client_max_window_bits";
+const PARAM_CLIENT_NO_CONTEXT_TAKEOVER: &str = "client_no_context_takeover";
+const PARAM_SERVER_MAX_WINDOW_BITS: &str = "server_max_window_bits";
+const PARAM_SERVER_NO_CONTEXT_TAKEOVER: &str = "server_no_context_takeover";
 
 const TRAILER: [u8; 4] = [0x00, 0x00, 0xff, 0xff];
 
@@ -37,9 +37,6 @@ pub enum NegotiationError {
     /// Duplicate parameter in a negotiation response.
     #[error("Duplicate parameter in a negotiation response: {0}")]
     DuplicateParameter(String),
-    /// Received `client_max_window_bits` value in a negotiation response for an offer that had a smaller value.
-    #[error("Received client_max_windows_bits value in a negotiation response that is larger than the offer: {0} > {1}")]
-    ClientMaxWindowBitsValueTooLarge(String, u8),
     /// Received `client_max_window_bits` in a negotiation response for an offer without it.
     #[error("Received client_max_window_bits in a negotiation response for an offer without it")]
     UnexpectedClientMaxWindowBits,
@@ -52,9 +49,6 @@ pub enum NegotiationError {
     /// Invalid `server_max_window_bits` value in a negotiation response.
     #[error("Invalid server_max_window_bits value in a negotiation response: {0}")]
     InvalidServerMaxWindowBitsValue(String),
-    /// Missing `client_max_window_bits` value in a negotiation response.
-    #[error("Missing client_max_window_bits value in a negotiation response")]
-    MissingClientMaxWindowBitsValue,
     /// Missing `server_max_window_bits` value in a negotiation response.
     #[error("Missing server_max_window_bits value in a negotiation response")]
     MissingServerMaxWindowBitsValue,
@@ -66,7 +60,7 @@ pub struct DeflateConfig {
     /// The max size of the sliding window. If the other endpoint selects a smaller size, that size
     /// will be used instead. This must be an integer between 8 and 15 inclusive.
     /// Default: 15
-    pub max_window_bits: u8,
+    pub compression: Compression,
     /// Indicates whether to ask the other endpoint to reset the sliding window for each message.
     /// Default: false
     pub request_no_context_takeover: bool,
@@ -80,7 +74,7 @@ pub struct DeflateConfig {
 impl Default for DeflateConfig {
     fn default() -> DeflateConfig {
         DeflateConfig {
-            max_window_bits: 15,
+            compression: Compression::best(),
             request_no_context_takeover: false,
             accept_no_context_takeover: false,
         }
@@ -95,18 +89,6 @@ impl DeflateConfig {
     /// deflate protocol
     pub(crate) fn create_extension(&mut self) -> WebSocketExtension {
         let mut params = vec![];
-        if self.max_window_bits < 15 {
-            params.push((
-                PARAM_CLIENT_MAX_WINDOW_BITS.to_owned(),
-                Some(self.max_window_bits.to_string()),
-            ));
-            params.push((
-                PARAM_SERVER_MAX_WINDOW_BITS.to_owned(),
-                Some(self.max_window_bits.to_string()),
-            ));
-        } else {
-            params.push((PARAM_CLIENT_MAX_WINDOW_BITS.to_owned(), None));
-        }
 
         if self.request_no_context_takeover {
             params.push((PARAM_SERVER_NO_CONTEXT_TAKEOVER.to_owned(), None));
@@ -117,6 +99,84 @@ impl DeflateConfig {
         }
 
         WebSocketExtension { name: PERMESSAGE_DEFLATE_NAME.to_owned(), params }
+    }
+
+    pub(crate) fn accept_offer(&self, offer: &WebSocketExtension) -> Option<WebSocketExtension> {
+        if offer.name == PERMESSAGE_DEFLATE_NAME {
+            let mut params = Vec::new();
+
+            let mut config = DeflateConfig::default();
+            let mut seen_server_no_context_takeover = false;
+            let mut seen_client_no_context_takeover = false;
+            let mut seen_client_max_window_bits = false;
+
+            for (key, val) in offer.params() {
+                match key {
+                    PARAM_SERVER_NO_CONTEXT_TAKEOVER => {
+                        // Invalid offer with multiple params with same name is declined.
+                        if seen_server_no_context_takeover {
+                            return None;
+                        }
+                        seen_server_no_context_takeover = true;
+                        config.request_no_context_takeover = true;
+                        params.push((PARAM_SERVER_NO_CONTEXT_TAKEOVER.to_owned(), None));
+                    }
+
+                    PARAM_CLIENT_NO_CONTEXT_TAKEOVER => {
+                        // Invalid offer with multiple params with same name is declined.
+                        if seen_client_no_context_takeover {
+                            return None;
+                        }
+                        seen_client_no_context_takeover = true;
+                        config.accept_no_context_takeover = true;
+                        params.push((PARAM_CLIENT_NO_CONTEXT_TAKEOVER.to_owned(), None));
+                    }
+
+                    // Max window bits are not supported at the moment.
+                    PARAM_SERVER_MAX_WINDOW_BITS => {
+                        // Decline offer with invalid parameter value.
+                        // `server_max_window_bits` requires a value in range [8, 15].
+                        if let Some(bits) = val {
+                            if !is_valid_max_window_bits(bits) {
+                                return None;
+                            }
+                        } else {
+                            return None;
+                        }
+
+                        // A server declines an extension negotiation offer with this parameter
+                        // if the server doesn't support it.
+                        return None;
+                    }
+
+                    // Not supported, but server may ignore and accept the offer.
+                    PARAM_CLIENT_MAX_WINDOW_BITS => {
+                        // Decline offer with invalid parameter value.
+                        // `client_max_window_bits` requires a value in range [8, 15] or no value.
+                        if let Some(bits) = val {
+                            if !is_valid_max_window_bits(bits) {
+                                return None;
+                            }
+                        }
+
+                        // Invalid offer with multiple params with same name is declined.
+                        if seen_client_max_window_bits {
+                            return None;
+                        }
+                        seen_client_max_window_bits = true;
+                    }
+
+                    // Offer with unknown parameter MUST be declined.
+                    _ => {
+                        return None;
+                    }
+                }
+            }
+
+            Some(WebSocketExtension { name: PERMESSAGE_DEFLATE_NAME.to_owned(), params })
+        } else {
+            None
+        }
     }
 }
 
@@ -130,12 +190,14 @@ pub struct DeflateContext {
 
 impl DeflateContext {
     /// Create a new context from the given extension parameters
-    pub fn new_from_extension_params<'a, I>(config: DeflateConfig, params: I) -> Result<Self, DeflateError>
+    pub fn new_from_extension_params<'a, I>(
+        config: DeflateConfig,
+        params: I,
+    ) -> Result<Self, DeflateError>
     where
-        I: IntoIterator<Item = (&'a str, Option<&'a str>)>
+        I: IntoIterator<Item = (&'a str, Option<&'a str>)>,
     {
         let mut config = DeflateConfig {
-            max_window_bits: config.max_window_bits,
             accept_no_context_takeover: config.accept_no_context_takeover,
             ..DeflateConfig::default()
         };
@@ -192,6 +254,16 @@ impl DeflateContext {
                             NegotiationError::MissingServerMaxWindowBitsValue,
                         ));
                     }
+
+                    // A server may include the "server_max_window_bits" extension parameter
+                    // in an extension negotiation response even if the extension
+                    // negotiation offer being accepted by the response didn't include the
+                    // "server_max_window_bits" extension parameter.
+                    //
+                    // However, but we need to fail the connection because we don't support it (condition 4).
+                    return Err(DeflateError::Negotiation(
+                        NegotiationError::ServerMaxWindowBitsNotSupported,
+                    ));
                 }
                 PARAM_CLIENT_MAX_WINDOW_BITS => {
                     // Fail the connection when the response contains a parameter with invalid value.
@@ -201,21 +273,17 @@ impl DeflateContext {
                                 NegotiationError::InvalidClientMaxWindowBitsValue(bits.to_owned()),
                             ));
                         }
-                    } else {
-                        return Err(DeflateError::Negotiation(
-                            NegotiationError::MissingClientMaxWindowBitsValue,
-                        ));
                     }
 
-                    if let Some(bits) = val {
-                        if bits.parse::<u8>().unwrap() > config.max_window_bits {
-                            return Err(DeflateError::Negotiation(
-                                NegotiationError::ClientMaxWindowBitsValueTooLarge(bits.to_owned(), config.max_window_bits),
-                            ));
-                        }
-
-                        config.max_window_bits = bits.parse().unwrap();
-                    }
+                    // Fail the connection because the parameter is invalid when the client didn't offer.
+                    //
+                    // If a received extension negotiation offer doesn't have the
+                    // "client_max_window_bits" extension parameter, the corresponding
+                    // extension negotiation response to the offer MUST NOT include the
+                    // "client_max_window_bits" extension parameter.
+                    return Err(DeflateError::Negotiation(
+                        NegotiationError::UnexpectedClientMaxWindowBits,
+                    ));
                 }
                 // Response with unknown parameter MUST fail the WebSocket connection.
                 _ => {
@@ -233,7 +301,7 @@ impl DeflateContext {
     pub fn new(config: DeflateConfig) -> Self {
         DeflateContext {
             config,
-            compressor: Compress::new(Compression::default(), false),
+            compressor: Compress::new(config.compression, false),
             decompressor: Decompress::new(false),
         }
     }
@@ -301,7 +369,7 @@ impl DeflateContext {
             }
         }
 
-        if is_final && self.config.accept_no_context_takeover {
+        if is_final && self.config.request_no_context_takeover {
             self.decompressor.reset(false);
         }
 

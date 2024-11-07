@@ -1,8 +1,9 @@
 use std::{net::TcpListener, thread::spawn};
 
+#[cfg(feature = "deflate")]
+use tungstenite::extensions::{deflate::DeflateConfig, Extensions};
 use tungstenite::{
     accept_hdr_with_config,
-    extensions::{deflate::DeflateConfig, Extensions},
     handshake::server::{Request, Response},
     protocol::WebSocketConfig,
 };
@@ -10,12 +11,15 @@ use tungstenite::{
 fn main() {
     env_logger::init();
 
+    #[cfg(feature = "deflate")]
     let permessage_deflate = DeflateConfig::default();
-
+    #[cfg(feature = "deflate")]
     let websocket_config = WebSocketConfig {
         extensions: Extensions { deflate: Some(permessage_deflate) },
         ..Default::default()
     };
+    #[cfg(not(feature = "deflate"))]
+    let websocket_config = WebSocketConfig::default();
 
     let server = TcpListener::bind("127.0.0.1:3012").unwrap();
     for stream in server.incoming() {
