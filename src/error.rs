@@ -194,6 +194,9 @@ pub enum ProtocolError {
     /// The `Sec-WebSocket-Protocol` header was invalid
     #[error("SubProtocol error: {0}")]
     SecWebSocketSubProtocolError(SubProtocolError),
+    /// The `Sec-WebSocket-Extensions` header is invalid.
+    #[error("Invalid \"Sec-WebSocket-Extensions\" header")]
+    InvalidSecWebSocketExtensionsHeader,
     /// Garbage data encountered after client request.
     #[error("Junk after client request")]
     JunkAfterRequest,
@@ -204,6 +207,9 @@ pub enum ProtocolError {
     #[error("Missing, duplicated or incorrect header {0}")]
     #[cfg(feature = "handshake")]
     InvalidHeader(HeaderName),
+    /// The negotiation response included an extension not offered.
+    #[error("Extension negotiation response has invalid extension: {0}")]
+    InvalidExtension(String),
     /// No more data while still performing handshake.
     #[error("Handshake not finished")]
     HandshakeIncomplete,

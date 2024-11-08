@@ -1,5 +1,9 @@
 //! HTTP Request and response header handling.
 
+mod websocket_extensions;
+
+pub use websocket_extensions::{WebSocketExtension, WebSocketExtensions};
+
 use http::header::{HeaderMap, HeaderName, HeaderValue};
 use httparse::Status;
 

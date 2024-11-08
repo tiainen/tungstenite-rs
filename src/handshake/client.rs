@@ -13,12 +13,13 @@ use log::*;
 
 use super::{
     derive_accept_key,
-    headers::{FromHttparse, MAX_HEADERS},
+    headers::{FromHttparse, WebSocketExtensions, MAX_HEADERS},
     machine::{HandshakeMachine, StageResult, TryParse},
     HandshakeRole, MidHandshake, ProcessingResult,
 };
 use crate::{
     error::{Error, ProtocolError, Result, SubProtocolError, UrlError},
+    extensions::ExtensionsContext,
     protocol::{Role, WebSocket, WebSocketConfig},
 };
 
@@ -248,7 +249,14 @@ impl VerifyData {
         // that was not present in the client's handshake (the server has
         // indicated an extension not requested by the client), the client
         // MUST _Fail the WebSocket Connection_. (RFC 6455)
-        // TODO
+        if let Some(agreed) = headers
+            .iter()
+            .filter(|(key, _)| key.as_str() == "sec-websocket-extensions")
+            .map(|(_, value)| WebSocketExtensions::from(value))
+            .next()
+        {
+            verify_extensions(&agreed)?;
+        }
 
         // 6.  If the response includes a |Sec-WebSocket-Protocol| header field
         // and this header field indicates the use of a subprotocol that was
@@ -279,6 +287,14 @@ impl VerifyData {
 
         Ok(response)
     }
+}
+
+fn verify_extensions(agreed_extensions: &WebSocketExtensions) -> Result<Option<ExtensionsContext>> {
+    if let Some(extension) = agreed_extensions.iter().next() {
+        // The client didn't request anything, but got something
+        return Err(Error::Protocol(ProtocolError::InvalidExtension(extension.name().to_string())));
+    }
+    Ok(None)
 }
 
 impl TryParse for Response {
