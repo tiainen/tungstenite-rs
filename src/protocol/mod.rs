@@ -13,7 +13,10 @@ use self::{
     },
     message::{IncompleteMessage, IncompleteMessageType},
 };
-use crate::error::{Error, ProtocolError, Result};
+use crate::{
+    error::{Error, ProtocolError, Result},
+    extensions::{ExtensionsConfig, ExtensionsContext},
+};
 use log::*;
 use std::{
     io::{self, Read, Write},
@@ -70,6 +73,8 @@ pub struct WebSocketConfig {
     /// some popular libraries that are sending unmasked frames, ignoring the RFC.
     /// By default this option is set to `false`, i.e. according to RFC 6455.
     pub accept_unmasked_frames: bool,
+    /// Configuration for WebSocket extensions.
+    pub extensions: ExtensionsConfig,
 }
 
 impl Default for WebSocketConfig {
@@ -82,6 +87,7 @@ impl Default for WebSocketConfig {
             max_message_size: Some(64 << 20),
             max_frame_size: Some(16 << 20),
             accept_unmasked_frames: false,
+            extensions: ExtensionsConfig::default(),
         }
     }
 }
@@ -125,6 +131,18 @@ impl<Stream> WebSocket<Stream> {
     }
 
     /// Convert a raw socket into a WebSocket without performing a handshake.
+    pub fn from_raw_socket_with_extensions(
+        stream: Stream,
+        role: Role,
+        config: Option<WebSocketConfig>,
+        extensions: Option<ExtensionsContext>,
+    ) -> Self {
+        let mut context = WebSocketContext::new(role, config);
+        context.extensions = extensions;
+        WebSocket { socket: stream, context }
+    }
+
+    /// Convert a raw socket into a WebSocket without performing a handshake.
     ///
     /// Call this function if you're using Tungstenite as a part of a web framework
     /// or together with an existing one. If you need an initial handshake, use
@@ -141,6 +159,22 @@ impl<Stream> WebSocket<Stream> {
         WebSocket {
             socket: stream,
             context: WebSocketContext::from_partially_read(part, role, config),
+        }
+    }
+
+    #[cfg(feature = "handshake")]
+    pub(crate) fn from_partially_read_with_extensions(
+        stream: Stream,
+        part: Vec<u8>,
+        role: Role,
+        config: Option<WebSocketConfig>,
+        extensions: Option<ExtensionsContext>,
+    ) -> Self {
+        WebSocket {
+            socket: stream,
+            context: WebSocketContext::from_partially_read_with_extensions(
+                part, role, config, extensions,
+            ),
         }
     }
 
@@ -315,6 +349,8 @@ pub struct WebSocketContext {
     unflushed_additional: bool,
     /// The configuration for the websocket session.
     config: WebSocketConfig,
+    /// The resolved extensions to be used in this websocket session.
+    pub(crate) extensions: Option<ExtensionsContext>,
 }
 
 impl WebSocketContext {
@@ -346,7 +382,18 @@ impl WebSocketContext {
             additional_send: None,
             unflushed_additional: false,
             config,
+            extensions: None,
         }
+    }
+
+    #[cfg(feature = "handshake")]
+    pub(crate) fn from_partially_read_with_extensions(
+        part: Vec<u8>,
+        role: Role,
+        config: Option<WebSocketConfig>,
+        extensions: Option<ExtensionsContext>,
+    ) -> Self {
+        WebSocketContext { extensions, ..WebSocketContext::from_partially_read(part, role, config) }
     }
 
     /// Change the configuration.
