@@ -1,4 +1,4 @@
-use http::HeaderValue;
+use http::{header::SEC_WEBSOCKET_EXTENSIONS, HeaderMap, HeaderValue};
 
 /// `Sec-WebSocket-Extensions` header, defined in [RFC6455][RFC6455_11.3.2]
 ///
@@ -6,7 +6,36 @@ use http::HeaderValue;
 pub struct WebSocketExtensions(Vec<WebSocketExtension>);
 
 impl WebSocketExtensions {
-    /// An iterator over the `WebsocketExtension`s in `SecWebsocketExtensions` header(s).
+    /// Create a `WebSocketExtensions` from a `Vec<WebSocketExtension>`.
+    pub fn new(extensions: Vec<WebSocketExtension>) -> Self {
+        Self(extensions)
+    }
+
+    /// Create a `WebSocketExtensions` from a map of http headers.
+    pub fn from_headers(headers: &HeaderMap) -> Self {
+        Self(
+            headers
+                .iter()
+                .filter(|(key, _)| key.as_str() == SEC_WEBSOCKET_EXTENSIONS.as_str())
+                .flat_map(|(_, value)| {
+                    WebSocketExtensions::from(value)
+                        .iter()
+                        .map(|w| w.to_owned())
+                        .collect::<Vec<_>>()
+                })
+                .collect(),
+        )
+    }
+
+    /// Write the header value
+    pub fn write_headers(&self, headers: &mut HeaderMap) {
+        for accepted_offer in self.iter() {
+            let proto = accepted_offer.proto();
+            headers.append(SEC_WEBSOCKET_EXTENSIONS, HeaderValue::from_str(&proto).unwrap());
+        }
+    }
+
+    /// An iterator over the `WebSocketExtension`s in `SecWebsocketExtensions` header(s).
     pub fn iter(&self) -> impl Iterator<Item = &WebSocketExtension> {
         self.0.iter()
     }
