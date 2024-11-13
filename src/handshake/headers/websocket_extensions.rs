@@ -68,8 +68,8 @@ impl From<&HeaderValue> for WebSocketExtensions {
 /// A WebSocket extension containing the name and parameters.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WebSocketExtension {
-    name: String,
-    params: Vec<(String, Option<String>)>,
+    pub(crate) name: String,
+    pub(crate) params: Vec<(String, Option<String>)>,
 }
 
 impl WebSocketExtension {

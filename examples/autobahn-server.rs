@@ -4,7 +4,12 @@ use std::{
 };
 
 use log::*;
-use tungstenite::{accept, handshake::HandshakeRole, Error, HandshakeError, Message, Result};
+#[cfg(feature = "deflate")]
+use tungstenite::extensions::{deflate::DeflateConfig, ExtensionsConfig};
+use tungstenite::{
+    accept_with_config, handshake::HandshakeRole, protocol::WebSocketConfig, Error, HandshakeError,
+    Message, Result,
+};
 
 fn must_not_block<Role: HandshakeRole>(err: HandshakeError<Role>) -> Error {
     match err {
@@ -14,7 +19,14 @@ fn must_not_block<Role: HandshakeRole>(err: HandshakeError<Role>) -> Error {
 }
 
 fn handle_client(stream: TcpStream) -> Result<()> {
-    let mut socket = accept(stream).map_err(must_not_block)?;
+    #[cfg(feature = "deflate")]
+    let websocket_config = WebSocketConfig {
+        extensions: ExtensionsConfig { deflate: Some(DeflateConfig::default()) },
+        ..Default::default()
+    };
+    #[cfg(not(feature = "deflate"))]
+    let websocket_config = WebSocketConfig::default();
+    let mut socket = accept_with_config(stream, Some(websocket_config)).map_err(must_not_block)?;
     info!("Running test");
     loop {
         match socket.read()? {

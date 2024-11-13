@@ -271,7 +271,7 @@ impl VerifyData {
         // indicated an extension not requested by the client), the client
         // MUST _Fail the WebSocket Connection_. (RFC 6455)
         let extensions = if let Some(config) = config {
-            config.extensions.verify_extensions(&WebSocketExtensions::from_headers(&headers))?
+            config.extensions.verify_extensions(&WebSocketExtensions::from_headers(headers))?
         } else {
             None
         };
