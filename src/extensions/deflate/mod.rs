@@ -3,12 +3,18 @@
 use flate2::{Compress, Compression, Decompress, Status};
 use thiserror::Error;
 
+#[cfg(feature = "handshake")]
 use crate::handshake::headers::WebSocketExtension;
 
+#[cfg(feature = "handshake")]
 const PERMESSAGE_DEFLATE_NAME: &str = "permessage-deflate";
+#[cfg(feature = "handshake")]
 const PARAM_CLIENT_MAX_WINDOW_BITS: &str = "client_max_window_bits";
+#[cfg(feature = "handshake")]
 const PARAM_CLIENT_NO_CONTEXT_TAKEOVER: &str = "client_no_context_takeover";
+#[cfg(feature = "handshake")]
 const PARAM_SERVER_MAX_WINDOW_BITS: &str = "server_max_window_bits";
+#[cfg(feature = "handshake")]
 const PARAM_SERVER_NO_CONTEXT_TAKEOVER: &str = "server_no_context_takeover";
 
 const TRAILER: [u8; 4] = [0x00, 0x00, 0xff, 0xff];
@@ -75,6 +81,7 @@ pub struct DeflateContext {
     decompressor: Decompress,
 }
 
+#[cfg(feature = "handshake")]
 impl DeflateConfig {
     pub(crate) fn name(&self) -> &str {
         PERMESSAGE_DEFLATE_NAME
@@ -159,6 +166,7 @@ impl DeflateConfig {
     }
 }
 
+#[cfg(feature = "handshake")]
 impl From<DeflateConfig> for WebSocketExtension {
     fn from(val: DeflateConfig) -> Self {
         let mut params = vec![];
@@ -177,6 +185,7 @@ impl From<DeflateConfig> for WebSocketExtension {
 
 impl DeflateContext {
     /// Create a new context from the given extension parameters
+    #[cfg(feature = "handshake")]
     pub fn new<'a, I>(config: DeflateConfig, params: I) -> Result<Self, DeflateError>
     where
         I: IntoIterator<Item = (&'a str, Option<&'a str>)>,
@@ -368,4 +377,241 @@ impl From<DeflateConfig> for DeflateContext {
 fn is_valid_max_window_bits(bits: &str) -> bool {
     // Note that values from `headers::SecWebSocketExtensions` is unquoted.
     matches!(bits, "8" | "9" | "10" | "11" | "12" | "13" | "14" | "15")
+}
+
+#[cfg(all(test, feature = "handshake"))]
+mod tests {
+    use super::{
+        is_valid_max_window_bits, DeflateConfig, DeflateContext, DeflateError, NegotiationError,
+        PARAM_CLIENT_MAX_WINDOW_BITS, PARAM_CLIENT_NO_CONTEXT_TAKEOVER,
+        PARAM_SERVER_MAX_WINDOW_BITS, PARAM_SERVER_NO_CONTEXT_TAKEOVER, PERMESSAGE_DEFLATE_NAME,
+    };
+    use crate::handshake::headers::WebSocketExtension;
+
+    #[test]
+    fn accept_correct_extension() {
+        let config = DeflateConfig::default();
+
+        let accepted_extension = config
+            .accept_offer(&WebSocketExtension {
+                name: PERMESSAGE_DEFLATE_NAME.to_owned(),
+                params: vec![],
+            })
+            .expect("offer should have been accepted");
+        assert_eq!(accepted_extension.name, PERMESSAGE_DEFLATE_NAME);
+        assert!(accepted_extension.params.is_empty());
+    }
+
+    #[test]
+    fn accept_server_no_context_takeover() {
+        let config = DeflateConfig::default();
+
+        let accepted_extension = config
+            .accept_offer(&WebSocketExtension {
+                name: PERMESSAGE_DEFLATE_NAME.to_owned(),
+                params: vec![(PARAM_SERVER_NO_CONTEXT_TAKEOVER.to_owned(), None)],
+            })
+            .expect("offer should have been accepted");
+        assert_eq!(accepted_extension.name, PERMESSAGE_DEFLATE_NAME);
+        assert_eq!(accepted_extension.params.len(), 1);
+        assert_eq!(
+            accepted_extension.params().next(),
+            Some((PARAM_SERVER_NO_CONTEXT_TAKEOVER, None))
+        );
+    }
+
+    #[test]
+    fn accept_client_no_context_takeover() {
+        let config = DeflateConfig::default();
+
+        let accepted_extension = config
+            .accept_offer(&WebSocketExtension {
+                name: PERMESSAGE_DEFLATE_NAME.to_owned(),
+                params: vec![(PARAM_CLIENT_NO_CONTEXT_TAKEOVER.to_owned(), None)],
+            })
+            .expect("offer should have been accepted");
+        assert_eq!(accepted_extension.name, PERMESSAGE_DEFLATE_NAME);
+        assert_eq!(accepted_extension.params.len(), 1);
+        assert_eq!(
+            accepted_extension.params().next(),
+            Some((PARAM_CLIENT_NO_CONTEXT_TAKEOVER, None))
+        );
+    }
+
+    #[test]
+    fn reject_server_max_window_bits() {
+        let config = DeflateConfig::default();
+
+        let accepted_extension = config.accept_offer(&WebSocketExtension {
+            name: PERMESSAGE_DEFLATE_NAME.to_owned(),
+            params: vec![(PARAM_SERVER_MAX_WINDOW_BITS.to_owned(), None)],
+        });
+        assert!(accepted_extension.is_none());
+    }
+
+    #[test]
+    fn ignore_client_max_window_bits() {
+        let config = DeflateConfig::default();
+
+        let accepted_extension = config
+            .accept_offer(&WebSocketExtension {
+                name: PERMESSAGE_DEFLATE_NAME.to_owned(),
+                params: vec![(PARAM_CLIENT_MAX_WINDOW_BITS.to_owned(), None)],
+            })
+            .expect("offer should have been accepted");
+        assert_eq!(accepted_extension.name, PERMESSAGE_DEFLATE_NAME);
+        assert!(accepted_extension.params.is_empty());
+    }
+
+    #[test]
+    fn reject_other_extension() {
+        let config = DeflateConfig::default();
+
+        let accepted_extension = config.accept_offer(&WebSocketExtension {
+            name: "custom-extension".to_owned(),
+            params: vec![],
+        });
+        assert!(accepted_extension.is_none());
+    }
+
+    #[test]
+    fn reject_unknown_parameter() {
+        let config = DeflateConfig::default();
+
+        let accepted_extension = config.accept_offer(&WebSocketExtension {
+            name: "custom-extension".to_owned(),
+            params: vec![("unknown_parameter".to_owned(), None)],
+        });
+        assert!(accepted_extension.is_none());
+    }
+
+    #[test]
+    fn reject_multiple_server_no_context_takeover() {
+        let config = DeflateConfig::default();
+
+        let accepted_extension = config.accept_offer(&WebSocketExtension {
+            name: "custom-extension".to_owned(),
+            params: vec![
+                (PARAM_SERVER_NO_CONTEXT_TAKEOVER.to_owned(), None),
+                (PARAM_SERVER_NO_CONTEXT_TAKEOVER.to_owned(), None),
+            ],
+        });
+        assert!(accepted_extension.is_none());
+    }
+
+    #[test]
+    fn reject_multiple_client_no_context_takeover() {
+        let config = DeflateConfig::default();
+
+        let accepted_extension = config.accept_offer(&WebSocketExtension {
+            name: "custom-extension".to_owned(),
+            params: vec![
+                (PARAM_CLIENT_NO_CONTEXT_TAKEOVER.to_owned(), None),
+                (PARAM_CLIENT_NO_CONTEXT_TAKEOVER.to_owned(), None),
+            ],
+        });
+        assert!(accepted_extension.is_none());
+    }
+
+    #[test]
+    fn reject_multiple_client_max_window_bits() {
+        let config = DeflateConfig::default();
+
+        let accepted_extension = config.accept_offer(&WebSocketExtension {
+            name: "custom-extension".to_owned(),
+            params: vec![
+                (PARAM_CLIENT_MAX_WINDOW_BITS.to_owned(), None),
+                (PARAM_CLIENT_MAX_WINDOW_BITS.to_owned(), None),
+            ],
+        });
+        assert!(accepted_extension.is_none());
+    }
+
+    #[test]
+    fn new_context_from_extension() {
+        let config = DeflateConfig::default();
+
+        let context = DeflateContext::new(config, vec![]);
+        assert!(context.is_ok());
+    }
+
+    #[test]
+    fn new_context_with_server_no_context_takeover() {
+        let config = DeflateConfig::default();
+
+        let context = DeflateContext::new(config, vec![(PARAM_SERVER_NO_CONTEXT_TAKEOVER, None)]);
+        assert!(context.is_ok());
+    }
+
+    #[test]
+    fn new_context_with_client_no_context_takeover() {
+        let config = DeflateConfig::default();
+
+        let context = DeflateContext::new(config, vec![(PARAM_CLIENT_NO_CONTEXT_TAKEOVER, None)]);
+        assert!(context.is_ok());
+    }
+
+    #[test]
+    fn new_context_with_unknown_parameter_fails() {
+        let config = DeflateConfig::default();
+
+        let context = DeflateContext::new(config, vec![("unknown-parameter", None)]);
+        assert!(context.is_err());
+        assert!(matches!(
+            context,
+            Err(DeflateError::Negotiation(NegotiationError::UnknownParameter(_)))
+        ));
+    }
+
+    #[test]
+    fn new_context_with_multiple_server_no_context_takeover_fails() {
+        let config = DeflateConfig::default();
+
+        let context = DeflateContext::new(
+            config,
+            vec![
+                (PARAM_SERVER_NO_CONTEXT_TAKEOVER, None),
+                (PARAM_SERVER_NO_CONTEXT_TAKEOVER, None),
+            ],
+        );
+        assert!(context.is_err());
+        assert!(matches!(
+            context,
+            Err(DeflateError::Negotiation(NegotiationError::DuplicateParameter(_)))
+        ));
+    }
+
+    #[test]
+    fn new_context_with_multiple_client_no_context_takeover_fails() {
+        let config = DeflateConfig::default();
+
+        let context = DeflateContext::new(
+            config,
+            vec![
+                (PARAM_CLIENT_NO_CONTEXT_TAKEOVER, None),
+                (PARAM_CLIENT_NO_CONTEXT_TAKEOVER, None),
+            ],
+        );
+        assert!(context.is_err());
+        assert!(matches!(
+            context,
+            Err(DeflateError::Negotiation(NegotiationError::DuplicateParameter(_)))
+        ));
+    }
+
+    #[test]
+    fn valid_max_window_bits() {
+        for bits in 8..=15 {
+            assert!(is_valid_max_window_bits(&bits.to_string()));
+        }
+    }
+
+    #[test]
+    fn invalid_max_window_bits() {
+        assert!(!is_valid_max_window_bits(""));
+        assert!(!is_valid_max_window_bits("0"));
+        assert!(!is_valid_max_window_bits("08"));
+        assert!(!is_valid_max_window_bits("+8"));
+        assert!(!is_valid_max_window_bits("-8"));
+    }
 }

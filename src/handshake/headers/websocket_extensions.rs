@@ -113,11 +113,11 @@ mod tests {
 
         assert_eq!(websocket_extensions.0.len(), 1);
         assert_eq!(
-            websocket_extensions.0.get(0).map(WebSocketExtension::name),
+            websocket_extensions.0.first().map(WebSocketExtension::name),
             Some("extension-name")
         );
         assert_eq!(
-            websocket_extensions.0.get(0).map(WebSocketExtension::params).unwrap().next(),
+            websocket_extensions.0.first().map(WebSocketExtension::params).unwrap().next(),
             None
         );
     }
@@ -129,10 +129,10 @@ mod tests {
 
         assert_eq!(websocket_extensions.0.len(), 1);
         assert_eq!(
-            websocket_extensions.0.get(0).map(WebSocketExtension::name),
+            websocket_extensions.0.first().map(WebSocketExtension::name),
             Some("extension-name")
         );
-        let mut params = websocket_extensions.0.get(0).map(WebSocketExtension::params).unwrap();
+        let mut params = websocket_extensions.0.first().map(WebSocketExtension::params).unwrap();
         assert_eq!(params.next(), Some(("param", None)));
         assert!(params.next().is_none());
     }
@@ -144,10 +144,10 @@ mod tests {
 
         assert_eq!(websocket_extensions.0.len(), 1);
         assert_eq!(
-            websocket_extensions.0.get(0).map(WebSocketExtension::name),
+            websocket_extensions.0.first().map(WebSocketExtension::name),
             Some("extension-name")
         );
-        let mut params = websocket_extensions.0.get(0).map(WebSocketExtension::params).unwrap();
+        let mut params = websocket_extensions.0.first().map(WebSocketExtension::params).unwrap();
         assert_eq!(params.next(), Some(("param", Some("5"))));
         assert!(params.next().is_none());
     }
@@ -160,10 +160,10 @@ mod tests {
 
         assert_eq!(websocket_extensions.0.len(), 1);
         assert_eq!(
-            websocket_extensions.0.get(0).map(WebSocketExtension::name),
+            websocket_extensions.0.first().map(WebSocketExtension::name),
             Some("extension-name")
         );
-        let mut params = websocket_extensions.0.get(0).map(WebSocketExtension::params).unwrap();
+        let mut params = websocket_extensions.0.first().map(WebSocketExtension::params).unwrap();
         assert_eq!(params.next(), Some(("param-1", Some("5"))));
         assert_eq!(params.next(), Some(("param-2", None)));
         assert_eq!(params.next(), Some(("param-3", Some("yes"))));
@@ -177,7 +177,7 @@ mod tests {
 
         assert_eq!(websocket_extensions.0.len(), 3);
         assert_eq!(
-            websocket_extensions.0.get(0).map(WebSocketExtension::name),
+            websocket_extensions.0.first().map(WebSocketExtension::name),
             Some("extension-name-1")
         );
         assert_eq!(
@@ -188,7 +188,7 @@ mod tests {
             websocket_extensions.0.get(2).map(WebSocketExtension::name),
             Some("extension-name-3")
         );
-        let mut params = websocket_extensions.0.get(0).map(WebSocketExtension::params).unwrap();
+        let mut params = websocket_extensions.0.first().map(WebSocketExtension::params).unwrap();
         assert_eq!(params.next(), Some(("param-1", Some("5"))));
         assert_eq!(params.next(), Some(("param-2", None)));
         assert!(params.next().is_none());

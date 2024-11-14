@@ -6,7 +6,9 @@ pub mod deflate;
 #[cfg(feature = "deflate")]
 use deflate::{DeflateConfig, DeflateContext};
 
+#[cfg(feature = "handshake")]
 use crate::error::{Error, ProtocolError, Result};
+#[cfg(feature = "handshake")]
 use crate::handshake::headers::WebSocketExtensions;
 
 /// Configures the websocket extensions to be offered during
@@ -19,6 +21,7 @@ pub struct ExtensionsConfig {
     pub deflate: Option<DeflateConfig>,
 }
 
+#[cfg(feature = "handshake")]
 impl ExtensionsConfig {
     /// Create extensions to be offered to the server
     pub(crate) fn create_offers(&self) -> WebSocketExtensions {

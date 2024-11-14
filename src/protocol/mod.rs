@@ -162,8 +162,8 @@ impl<Stream> WebSocket<Stream> {
         }
     }
 
-    #[cfg(feature = "handshake")]
-    pub(crate) fn from_partially_read_with_extensions(
+    /// Convert a raw socket into a WebSocket without performing a handshake.
+    pub fn from_partially_read_with_extensions(
         stream: Stream,
         part: Vec<u8>,
         role: Role,
@@ -370,6 +370,19 @@ impl WebSocketContext {
         Self::_new(role, FrameCodec::from_partially_read(part), config.unwrap_or_default())
     }
 
+    /// Create a WebSocket context that manages an post-handshake stream.
+    ///
+    /// # Panics
+    /// Panics if config is invalid e.g. `max_write_buffer_size <= write_buffer_size`.
+    pub fn from_partially_read_with_extensions(
+        part: Vec<u8>,
+        role: Role,
+        config: Option<WebSocketConfig>,
+        extensions: Option<ExtensionsContext>,
+    ) -> Self {
+        WebSocketContext { extensions, ..WebSocketContext::from_partially_read(part, role, config) }
+    }
+
     fn _new(role: Role, mut frame: FrameCodec, config: WebSocketConfig) -> Self {
         config.assert_valid();
         frame.set_max_out_buffer_len(config.max_write_buffer_size);
@@ -384,16 +397,6 @@ impl WebSocketContext {
             config,
             extensions: None,
         }
-    }
-
-    #[cfg(feature = "handshake")]
-    pub(crate) fn from_partially_read_with_extensions(
-        part: Vec<u8>,
-        role: Role,
-        config: Option<WebSocketConfig>,
-        extensions: Option<ExtensionsContext>,
-    ) -> Self {
-        WebSocketContext { extensions, ..WebSocketContext::from_partially_read(part, role, config) }
     }
 
     /// Change the configuration.
